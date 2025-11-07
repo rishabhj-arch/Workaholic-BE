@@ -72,7 +72,9 @@ export const loginUser = async (req, res, next) => {
     const [fd] = await db.execute('SELECT name, skills_json AS skills, experience FROM freelancer_details WHERE user_id = ?', [user.id])
     const userDetails = { ...(ud[0] || {}), ...(fd[0] || {}) }
 
-    if (!userDetails.role) userDetails.role = 'freelancer'
+    if (!userDetails.role) {
+      userDetails.role = userDetails.companyName ? 'company' : 'freelancer'
+    }
 
     if (userDetails.companies) {
       try { userDetails.companies = JSON.parse(userDetails.companies) } catch { userDetails.companies = [] }
@@ -117,7 +119,9 @@ export const getUserByEmail = async (req, res, next) => {
     const [fd] = await db.execute('SELECT name, skills_json AS skills, experience FROM freelancer_details WHERE user_id = ?', [userId])
     const userDetails = { ...(ud[0] || {}), ...(fd[0] || {}) }
 
-    if (!userDetails.role) userDetails.role = 'freelancer'
+    if (!userDetails.role) {
+      userDetails.role = userDetails.companyName ? 'company' : 'freelancer'
+    }
 
     if (userDetails.companies) {
       try { userDetails.companies = JSON.parse(userDetails.companies) } catch { userDetails.companies = [] }
@@ -148,8 +152,16 @@ export const updateUserDetails = async (req, res, next) => {
     const userId = userRows[0].id
     companyName = companyName || null
     location = location || null
+
+    if (typeof skillsList === 'string' && !skillsList.trim()) skillsList = []
+    if (typeof companies === 'string' && !companies.trim()) companies = []
     skillsList = Array.isArray(skillsList) ? skillsList : []
     companies = Array.isArray(companies) ? companies : []
+
+    if (!role) {
+      const [existingRole] = await db.execute('SELECT role FROM user_details WHERE user_id = ?', [userId])
+      role = existingRole[0]?.role || null
+    }
 
     const [exists] = await db.execute('SELECT id FROM user_details WHERE user_id = ?', [userId])
     if (exists.length === 0) {
@@ -188,6 +200,44 @@ export const updateUserDetails = async (req, res, next) => {
     next(err)
   }
 }
+
+export const getUserProfile = async (req, res, next) => {
+  try {
+    const userId = req.user?.id; // extracted from token by protect middleware
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const [loginRows] = await db.execute('SELECT user_email FROM user_login WHERE id = ?', [userId]);
+    if (!loginRows.length) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const user_email = loginRows[0].user_email;
+
+    const [ud] = await db.execute(
+      'SELECT name, age, role, companyName, location, companies, details_completed FROM user_details WHERE user_id = ?',
+      [userId]
+    );
+    const [fd] = await db.execute(
+      'SELECT name AS freelancerName, skills_json AS skills, experience FROM freelancer_details WHERE user_id = ?',
+      [userId]
+    );
+
+    const userDetails = { ...(ud[0] || {}), ...(fd[0] || {}) };
+    try { userDetails.companies = JSON.parse(userDetails.companies || '[]'); } catch { userDetails.companies = []; }
+    try { userDetails.skillsList = JSON.parse(userDetails.skills || '[]'); } catch { userDetails.skillsList = []; }
+    delete userDetails.skills;
+
+    userDetails.detailsCompleted = userDetails.details_completed === 1;
+    delete userDetails.details_completed;
+
+    return res.status(200).json({
+      success: true,
+      user_email,
+      userDetails,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 
 export const deleteUserDetails = async (req, res, next) => {
   try {
